@@ -89,9 +89,8 @@ public class AuthController : ControllerBase
             return Unauthorized();
         }
 
-        // Rotate refresh token
-        var newRefreshToken = GenerateRefreshToken();
-        user.RefreshToken = newRefreshToken;
+        // Keep the same refresh token (avoid logout if the browser doesn't accept updated cookies).
+        // Just extend its expiry on each refresh.
         user.RefreshTokenExpiry = DateTime.UtcNow.AddDays(7);
 
         var newAccessToken = GenerateAccessToken(user, out var accessExpiry);
@@ -99,7 +98,7 @@ public class AuthController : ControllerBase
         _context.Users.Update(user);
         await _context.SaveChangesAsync();
 
-        SetAuthCookies(newAccessToken, accessExpiry, newRefreshToken, user.RefreshTokenExpiry.Value);
+        SetAuthCookies(newAccessToken, accessExpiry, refreshToken, user.RefreshTokenExpiry.Value);
         return Ok(user);
     }
 
@@ -171,10 +170,13 @@ public class AuthController : ControllerBase
 
     private void SetAuthCookies(string accessToken, DateTime accessExpiry, string refreshToken, DateTime refreshExpiry)
     {
-        // When running over HTTPS we use SameSite=None so that JS POSTs (refresh) include the cookies.
-        // When running over HTTP (local dev), fallback to Lax so cookies are accepted by browsers.
-        var sameSite = Request.IsHttps ? SameSiteMode.None : SameSiteMode.Lax;
-        var secure = Request.IsHttps;
+        // Ensure cookies are sent for cross-site POSTs (refresh requests) when using HTTPS.
+        // If we are running behind a reverse-proxy / load balancer, Request.IsHttps can be false,
+        // so also treat X-Forwarded-Proto=https as HTTPS.
+        var isHttps = Request.IsHttps || string.Equals(Request.Headers["X-Forwarded-Proto"], "https", StringComparison.OrdinalIgnoreCase);
+
+        var sameSite = isHttps ? SameSiteMode.None : SameSiteMode.Lax;
+        var secure = isHttps;
 
         var accessCookieOptions = new CookieOptions
         {

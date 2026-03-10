@@ -99,7 +99,7 @@ if (!string.IsNullOrEmpty(basePath))
 app.UseSwagger();
 app.UseSwaggerUI();
 
-if (app.Environment.IsDevelopment())
+if (app.Environment.IsDevelopment() || app.Environment.IsProduction())
 {
     app.MapOpenApi();
 }

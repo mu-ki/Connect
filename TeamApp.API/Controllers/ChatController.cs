@@ -56,7 +56,7 @@ public class ChatController : ControllerBase
     public async Task<IActionResult> GetUsers()
     {
         var users = await _context.Users
-            .Select(u => new { u.DisplayName, u.AvatarUrl })
+            .Select(u => new { u.AdUpn, u.DisplayName, u.AvatarUrl })
             .ToListAsync();
         return Ok(users);
     }

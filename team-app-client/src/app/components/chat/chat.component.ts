@@ -41,6 +41,7 @@ export class ChatComponent implements OnInit, OnDestroy {
     // Avatar
     currentUserAvatarUrl: string | null = null;
     userAvatarMap: Record<string, string | null> = {};
+    userDisplayNameMap: Record<string, string> = {};
     @ViewChild('avatarFileInput') avatarFileInputRef!: ElementRef<HTMLInputElement>;
 
     constructor(
@@ -52,8 +53,21 @@ export class ChatComponent implements OnInit, OnDestroy {
     ) { }
 
     private hasCheckedSession = false;
+    public isSessionReady = false;
 
     async ngOnInit() {
+        // Preload cached user quickly (helps avoid UI flicker on refresh)
+        const cached = localStorage.getItem('connect_user');
+        if (cached) {
+            try {
+                const cachedUser = JSON.parse(cached);
+                this.currentUser = cachedUser.displayName || cachedUser.email || cachedUser.adUpn;
+                this.currentUpn = cachedUser.adUpn || cachedUser.email;
+            } catch {
+                localStorage.removeItem('connect_user');
+            }
+        }
+
         this.authService.user$.subscribe(user => {
             // Only redirect after the first refresh attempt has completed.
             // Without this, the initial null value emitted by the BehaviorSubject
@@ -65,8 +79,9 @@ export class ChatComponent implements OnInit, OnDestroy {
                 return;
             }
 
-            this.currentUser = user.displayName || user.email;
-            this.currentUpn = user.email;
+            this.currentUser = user.displayName || user.email || user.adUpn;
+            // Prefer the AD UPN (canonical identifier) for DM resolution
+            this.currentUpn = user.adUpn || user.email;
         });
 
         // Search pipeline: debounce + cancel previous request
@@ -91,7 +106,10 @@ export class ChatComponent implements OnInit, OnDestroy {
 
         // Ensure we have a valid session before connecting
         await firstValueFrom(this.authService.refresh().pipe(
-            finalize(() => this.hasCheckedSession = true)
+            finalize(() => {
+                this.hasCheckedSession = true;
+                this.isSessionReady = true;
+            })
         ));
 
         this.loadUserProfiles();
@@ -175,13 +193,35 @@ export class ChatComponent implements OnInit, OnDestroy {
             const upn1 = parts[1];
             const upn2 = parts[2];
 
-            // Find the other user's UPN
-            let targetUpn = upn1;
-            if (this.currentUpn && upn1.toLowerCase() === this.currentUpn.toLowerCase()) {
-                targetUpn = upn2;
-            } else if (this.currentUpn && upn2.toLowerCase() === this.currentUpn.toLowerCase()) {
+            // If we know current user UPN, pick the other one.
+            let targetUpn: string | null = null;
+            if (this.currentUpn) {
+                if (upn1.toLowerCase() === this.currentUpn.toLowerCase()) {
+                    targetUpn = upn2;
+                } else if (upn2.toLowerCase() === this.currentUpn.toLowerCase()) {
+                    targetUpn = upn1;
+                }
+            }
+
+            // If we still don't know which side we are, pick the UPN which is not the cached current user display.
+            if (!targetUpn) {
+                const display1 = this.userDisplayNameMap[upn1.toLowerCase()];
+                const display2 = this.userDisplayNameMap[upn2.toLowerCase()];
+                if (display1 && !display2) {
+                    targetUpn = upn1;
+                } else if (!display1 && display2) {
+                    targetUpn = upn2;
+                }
+            }
+
+            // Fallback to upn1 if still unknown
+            if (!targetUpn) {
                 targetUpn = upn1;
             }
+
+            // If we have a cached display name for the UPN, use it.
+            const cached = this.userDisplayNameMap[targetUpn.toLowerCase()];
+            if (cached) return cached;
 
             // Clean up the UPN to look like a Display Name (e.g. nisha.kurian@... -> Nisha Kurian)
             const namePart = targetUpn.split('@')[0];
@@ -240,6 +280,7 @@ export class ChatComponent implements OnInit, OnDestroy {
         this.chatService.getUsers().subscribe(users => {
             users.forEach(u => {
                 this.userAvatarMap[u.displayName] = u.avatarUrl || null;
+                this.userDisplayNameMap[u.adUpn.toLowerCase()] = u.displayName;
             });
             if (this.currentUser) {
                 this.currentUserAvatarUrl = this.userAvatarMap[this.currentUser] || null;

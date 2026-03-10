@@ -99,7 +99,7 @@ export class ChatService {
     }
 
     public getUsers() {
-        return this.http.get<{ displayName: string, avatarUrl: string | null }[]>(`${this.apiUrl}/users`, { withCredentials: true });
+        return this.http.get<{ adUpn: string, displayName: string, avatarUrl: string | null }[]>(`${this.apiUrl}/users`, { withCredentials: true });
     }
 
     public getOnlineUsers() {

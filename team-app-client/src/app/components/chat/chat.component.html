@@ -82,7 +82,12 @@
                     <span class="hash" *ngIf="!activeChannel?.name?.startsWith('DM_')">#</span>
                     <span class="status-dot header-status" *ngIf="activeChannel?.name?.startsWith('DM_')"
                         [class.online]="isDmOnline(activeChannel?.name)"></span>
-                    {{ formatChannelName(activeChannel?.name) || 'Loading...' }}
+                    <ng-container *ngIf="isSessionReady; else loadingTitle">
+                        {{ formatChannelName(activeChannel?.name) || 'Loading...' }}
+                    </ng-container>
+                    <ng-template #loadingTitle>
+                        Loading…
+                    </ng-template>
                 </h3>
                 <p class="topic" *ngIf="!activeChannel?.name?.startsWith('DM_')">Company-wide discussion and
                     announcements</p>

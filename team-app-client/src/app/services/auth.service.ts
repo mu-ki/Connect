@@ -11,26 +11,52 @@ export class AuthService {
   public user$ = this.userSubject.asObservable();
 
   constructor(private http: HttpClient) {
+    // Seed with cached user (helps UI render correctly while refresh is running).
+    const cached = localStorage.getItem('connect_user');
+    if (cached) {
+      try {
+        this.userSubject.next(JSON.parse(cached));
+      } catch {
+        localStorage.removeItem('connect_user');
+      }
+    }
+
     // Attempt to refresh token on startup (cookie-based session)
     this.refresh().subscribe({
       next: () => {},
-      error: () => this.userSubject.next(null)
+      error: () => {
+        this.userSubject.next(null);
+        localStorage.removeItem('connect_user');
+      }
     });
   }
 
   login(username: string, password: string = 'password') {
     return this.http.post<any>(`${this.apiUrl}/login`, { username, password }, { withCredentials: true })
       .pipe(
-        tap(user => this.userSubject.next(user))
+        tap(user => {
+          this.userSubject.next(user);
+          localStorage.setItem('connect_user', JSON.stringify(user));
+        })
       );
   }
 
   refresh() {
     return this.http.post<any>(`${this.apiUrl}/refresh`, {}, { withCredentials: true })
       .pipe(
-        tap(user => this.userSubject.next(user)),
+        tap(user => {
+          // Always update the user state with what the server returns.
+          // If the refresh endpoint returns null, we should clear the cached user.
+          this.userSubject.next(user);
+          if (user) {
+            localStorage.setItem('connect_user', JSON.stringify(user));
+          } else {
+            localStorage.removeItem('connect_user');
+          }
+        }),
         catchError(() => {
           this.userSubject.next(null);
+          localStorage.removeItem('connect_user');
           return of(null);
         })
       );
@@ -42,8 +68,14 @@ export class AuthService {
 
   logout() {
     this.http.post(`${this.apiUrl}/logout`, {}, { withCredentials: true }).subscribe({
-      next: () => this.userSubject.next(null),
-      error: () => this.userSubject.next(null)
+      next: () => {
+        this.userSubject.next(null);
+        localStorage.removeItem('connect_user');
+      },
+      error: () => {
+        this.userSubject.next(null);
+        localStorage.removeItem('connect_user');
+      }
     });
   }
 

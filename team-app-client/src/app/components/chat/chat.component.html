@@ -11,6 +11,7 @@
             <div class="search-container">
                 <input type="text" placeholder="Search Users..." [(ngModel)]="searchQuery" name="searchQuery"
                     (ngModelChange)="onSearchChange()" class="search-input">
+                <div class="search-spinner" *ngIf="isSearching" title="Searching…"></div>
                 @if (searchResults && searchResults.length > 0) {
                 <div class="search-dropdown">
                     @for (user of searchResults; track user.adUpn) {

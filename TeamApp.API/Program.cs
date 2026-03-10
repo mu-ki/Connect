@@ -18,6 +18,7 @@ builder.Services.AddCors(options =>
 });
 
 // Add services to the container.
+builder.Services.AddMemoryCache();
 builder.Services.AddControllers();
 builder.Services.AddScoped<IAdAuthService, AdAuthService>();
 builder.Services.AddSingleton<ConnectionTracker>();

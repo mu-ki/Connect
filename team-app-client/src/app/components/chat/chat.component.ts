@@ -1,7 +1,7 @@
 import { Component, OnInit, OnDestroy, ElementRef, ViewChild, ChangeDetectorRef } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
-import { firstValueFrom } from 'rxjs';
+import { Subject, debounceTime, distinctUntilChanged, switchMap, tap, of, firstValueFrom } from 'rxjs';
 import { ChatService } from '../../services/chat.service';
 import { AuthService } from '../../services/auth.service';
 import { WebrtcService } from '../../services/webrtc.service';
@@ -28,7 +28,8 @@ export class ChatComponent implements OnInit, OnDestroy {
     // Search State
     searchQuery = '';
     searchResults: any[] = [];
-    searchTimeout: any;
+    isSearching = false;
+    private searchTerms = new Subject<string>();
 
     // Call State
     isCallActive = false;
@@ -60,7 +61,25 @@ export class ChatComponent implements OnInit, OnDestroy {
             this.currentUser = user.displayName || user.email;
             this.currentUpn = user.email;
         });
-
+        // Search pipeline: debounce + cancel previous request
+        this.searchTerms.pipe(
+            debounceTime(300),
+            distinctUntilChanged(),
+            tap(() => {
+                this.isSearching = true;
+                this.searchResults = [];
+            }),
+            switchMap(term => term ? this.chatService.searchUsers(term) : of([]))
+        ).subscribe({
+            next: results => {
+                this.searchResults = results;
+                this.isSearching = false;
+            },
+            error: () => {
+                this.searchResults = [];
+                this.isSearching = false;
+            }
+        });
         // Ensure we have a valid session before connecting
         await firstValueFrom(this.authService.refresh());
 
@@ -179,18 +198,7 @@ export class ChatComponent implements OnInit, OnDestroy {
     }
 
     onSearchChange() {
-        if (this.searchTimeout) clearTimeout(this.searchTimeout);
-
-        if (!this.searchQuery || this.searchQuery.trim().length === 0) {
-            this.searchResults = [];
-            return;
-        }
-
-        this.searchTimeout = setTimeout(() => {
-            this.chatService.searchUsers(this.searchQuery).subscribe(users => {
-                this.searchResults = users;
-            });
-        }, 500); // debounce 500ms
+        this.searchTerms.next(this.searchQuery || '');
     }
 
     startDm(targetUser: any) {

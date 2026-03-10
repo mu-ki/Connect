@@ -1,10 +1,19 @@
 using System.Runtime.Versioning;
 using System.DirectoryServices.AccountManagement; // Use this when running on Windows for real AD validation
 
+using Microsoft.Extensions.Caching.Memory;
+
 namespace TeamApp.API.Services;
 
 public class AdAuthService : IAdAuthService
 {
+    private readonly IMemoryCache _cache;
+
+    public AdAuthService(IMemoryCache cache)
+    {
+        _cache = cache;
+    }
+
     public bool ValidateCredentials(string username, string password)
     {
         // Attempt real AD validation when running on Windows + domain access.
@@ -24,6 +33,14 @@ public class AdAuthService : IAdAuthService
 
     public IEnumerable<TeamApp.API.Models.UserDto> SearchUsers(string searchTerm)
     {
+        if (string.IsNullOrWhiteSpace(searchTerm)) return Array.Empty<TeamApp.API.Models.UserDto>();
+
+        var cacheKey = $"SearchUsers:{searchTerm.Trim().ToLowerInvariant()}";
+        if (_cache.TryGetValue(cacheKey, out List<TeamApp.API.Models.UserDto> cached))
+        {
+            return cached;
+        }
+
 #pragma warning disable CA1416 // Validate platform compatibility
         var users = new List<TeamApp.API.Models.UserDto>();
         try
@@ -52,6 +69,12 @@ public class AdAuthService : IAdAuthService
         {
             // If AD search fails (e.g. not on VPN), return an empty list or gracefully degrade
         }
+        finally
+        {
+            // Cache results for short-term to avoid excessive AD hits when user types
+            _cache.Set(cacheKey, users, TimeSpan.FromSeconds(10));
+        }
+
         return users;
 #pragma warning restore CA1416
     }

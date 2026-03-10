@@ -97,6 +97,12 @@ namespace TeamApp.API.Migrations
                     b.Property<DateTime?>("LastSeen")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<string>("RefreshToken")
+                        .HasColumnType("text");
+
+                    b.Property<DateTime?>("RefreshTokenExpiry")
+                        .HasColumnType("timestamp with time zone");
+
                     b.HasKey("Id");
 
                     b.ToTable("Users");

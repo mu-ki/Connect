@@ -1,7 +1,7 @@
 import { Component, OnInit, OnDestroy, ElementRef, ViewChild, ChangeDetectorRef } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
-import { Subject, debounceTime, distinctUntilChanged, switchMap, tap, of, firstValueFrom } from 'rxjs';
+import { Subject, debounceTime, distinctUntilChanged, switchMap, tap, of, firstValueFrom, finalize } from 'rxjs';
 import { ChatService } from '../../services/chat.service';
 import { AuthService } from '../../services/auth.service';
 import { WebrtcService } from '../../services/webrtc.service';
@@ -51,8 +51,15 @@ export class ChatComponent implements OnInit, OnDestroy {
         private cdr: ChangeDetectorRef
     ) { }
 
+    private hasCheckedSession = false;
+
     async ngOnInit() {
         this.authService.user$.subscribe(user => {
+            // Only redirect after the first refresh attempt has completed.
+            // Without this, the initial null value emitted by the BehaviorSubject
+            // immediately sends the user to the login page even if the refresh will succeed.
+            if (!this.hasCheckedSession) return;
+
             if (!user) {
                 this.router.navigate(['/login']);
                 return;
@@ -61,6 +68,7 @@ export class ChatComponent implements OnInit, OnDestroy {
             this.currentUser = user.displayName || user.email;
             this.currentUpn = user.email;
         });
+
         // Search pipeline: debounce + cancel previous request
         this.searchTerms.pipe(
             debounceTime(300),
@@ -80,8 +88,11 @@ export class ChatComponent implements OnInit, OnDestroy {
                 this.isSearching = false;
             }
         });
+
         // Ensure we have a valid session before connecting
-        await firstValueFrom(this.authService.refresh());
+        await firstValueFrom(this.authService.refresh().pipe(
+            finalize(() => this.hasCheckedSession = true)
+        ));
 
         this.loadUserProfiles();
 

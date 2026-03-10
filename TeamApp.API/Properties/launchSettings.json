@@ -1,6 +1,36 @@
-﻿{
+{
   "$schema": "https://json.schemastore.org/launchsettings.json",
+  "iisSettings": {
+    "windowsAuthentication": false,
+    "anonymousAuthentication": true,
+    "iis": {
+      "applicationUrl": "https://syslp2158.claysys.com/connect",
+      "sslPort": 0
+    },
+    "iisExpress": {
+      "applicationUrl": "http://syslp2158.claysys.com",
+      "sslPort": 0
+    }
+  },
   "profiles": {
+    "IIS": {
+      "commandName": "IIS",
+      "launchBrowser": true,
+      "launchUrl": "https://syslp2158.claysys.com/connect",
+      "environmentVariables": {
+        "ASPNETCORE_ENVIRONMENT": "Development",
+        "ASPNETCORE_APPL_PATH": "/connect"
+      }
+    },
+    "IIS Express": {
+      "commandName": "IISExpress",
+      "launchBrowser": true,
+      "launchUrl": "connect",
+      "environmentVariables": {
+        "ASPNETCORE_ENVIRONMENT": "Development",
+        "ASPNETCORE_APPL_PATH": "/connect"
+      }
+    },
     "http": {
       "commandName": "Project",
       "dotnetRunMessages": true,

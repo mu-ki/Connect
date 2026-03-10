@@ -19,60 +19,70 @@ public class AuthController : ControllerBase
     private readonly AppDbContext _context;
     private readonly IConfiguration _config;
     private readonly ConnectionTracker _tracker;
+    private readonly ILogger<AuthController> _logger;
 
-    public AuthController(IAdAuthService adAuthService, AppDbContext context, IConfiguration config, ConnectionTracker tracker)
+    public AuthController(IAdAuthService adAuthService, AppDbContext context, IConfiguration config, ConnectionTracker tracker, ILogger<AuthController> logger)
     {
         _adAuthService = adAuthService;
         _context = context;
         _config = config;
         _tracker = tracker;
+        _logger = logger;
     }
 
     [HttpPost("login")]
     public async Task<IActionResult> Login([FromBody] LoginRequest request)
     {
-        // 1. Validate against Active Directory
-        bool isValid = _adAuthService.ValidateCredentials(request.Username, request.Password);
-        if (!isValid) return Unauthorized("Invalid Active Directory credentials.");
-
-        // 2. Fetch or Create user in local PostgreSQL database
-        var user = await _context.Users.FirstOrDefaultAsync(u => u.AdUpn == request.Username);
-        
-        var adUser = _adAuthService.GetUserByUpn(request.Username);
-        string newDisplayName = adUser?.DisplayName ?? request.Username.Split('@')[0];
-
-        if (user == null)
+        try
         {
-            user = new User
+            // 1. Validate against Active Directory
+            bool isValid = _adAuthService.ValidateCredentials(request.Username, request.Password);
+            if (!isValid) return Unauthorized("Invalid Active Directory credentials.");
+
+            // 2. Fetch or Create user in local PostgreSQL database
+            var user = await _context.Users.FirstOrDefaultAsync(u => u.AdUpn == request.Username);
+            
+            var adUser = _adAuthService.GetUserByUpn(request.Username);
+            string newDisplayName = adUser?.DisplayName ?? request.Username.Split('@')[0];
+
+            if (user == null)
             {
-                Id = Guid.NewGuid(),
-                AdUpn = request.Username,
-                DisplayName = newDisplayName,
-                Email = request.Username
-            };
-            _context.Users.Add(user);
-            await _context.SaveChangesAsync();
-        }
-        else if (user.DisplayName != newDisplayName)
-        {
-            // Sync any updated display name
-            user.DisplayName = newDisplayName;
+                user = new User
+                {
+                    Id = Guid.NewGuid(),
+                    AdUpn = request.Username,
+                    DisplayName = newDisplayName,
+                    Email = request.Username
+                };
+                _context.Users.Add(user);
+                await _context.SaveChangesAsync();
+            }
+            else if (user.DisplayName != newDisplayName)
+            {
+                // Sync any updated display name
+                user.DisplayName = newDisplayName;
+                _context.Users.Update(user);
+                await _context.SaveChangesAsync();
+            }
+
+            // 3. Generate and persist tokens
+            var accessToken = GenerateAccessToken(user, out var accessExpiry);
+            var refreshToken = GenerateRefreshToken();
+            user.RefreshToken = refreshToken;
+            user.RefreshTokenExpiry = DateTime.UtcNow.AddDays(7);
             _context.Users.Update(user);
             await _context.SaveChangesAsync();
+
+            SetAuthCookies(accessToken, accessExpiry, refreshToken, user.RefreshTokenExpiry.Value);
+
+            // Return user info only; tokens are stored in secure cookies.
+            return Ok(user);
         }
-
-        // 3. Generate and persist tokens
-        var accessToken = GenerateAccessToken(user, out var accessExpiry);
-        var refreshToken = GenerateRefreshToken();
-        user.RefreshToken = refreshToken;
-        user.RefreshTokenExpiry = DateTime.UtcNow.AddDays(7);
-        _context.Users.Update(user);
-        await _context.SaveChangesAsync();
-
-        SetAuthCookies(accessToken, accessExpiry, refreshToken, user.RefreshTokenExpiry.Value);
-
-        // Return user info only; tokens are stored in secure cookies.
-        return Ok(user);
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Unhandled exception during login for {Username}", request.Username);
+            return Problem(detail: ex.Message, statusCode: 500);
+        }
     }
 
     [HttpPost("refresh")]

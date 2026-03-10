@@ -4,6 +4,7 @@ using Microsoft.EntityFrameworkCore;
 using System.Security.Claims;
 using TeamApp.API.Data;
 using TeamApp.API.Models;
+using TeamApp.API.Services;
 
 namespace TeamApp.API.Controllers;
 
@@ -13,10 +14,14 @@ namespace TeamApp.API.Controllers;
 public class ChatController : ControllerBase
 {
     private readonly AppDbContext _context;
+    private readonly IAdAuthService _adAuthService;
+    private readonly ConnectionTracker _tracker;
 
-    public ChatController(AppDbContext context)
+    public ChatController(AppDbContext context, IAdAuthService adAuthService, ConnectionTracker tracker)
     {
         _context = context;
+        _adAuthService = adAuthService;
+        _tracker = tracker;
     }
 
     [HttpGet("channels")]
@@ -99,6 +104,28 @@ public class ChatController : ControllerBase
         }
 
         return Ok(channel);
+    }
+
+    [HttpGet("search")]
+    public async Task<IActionResult> SearchUsers([FromQuery] string q)
+    {
+        if (string.IsNullOrWhiteSpace(q)) return Ok(new List<UserDto>());
+
+        var adUsers = _adAuthService.SearchUsers(q).ToList();
+
+        var upns = adUsers.Select(u => u.AdUpn).ToList();
+        var dbUsers = await _context.Users.Where(u => upns.Contains(u.AdUpn)).ToDictionaryAsync(u => u.AdUpn);
+
+        foreach (var user in adUsers)
+        {
+            user.IsOnline = _tracker.IsUserOnline(user.AdUpn);
+            if (dbUsers.TryGetValue(user.AdUpn, out var dbUser))
+            {
+                user.LastSeen = dbUser.LastSeen;
+            }
+        }
+
+        return Ok(adUsers);
     }
 
     [HttpGet("profile")]

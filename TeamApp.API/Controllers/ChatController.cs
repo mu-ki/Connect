@@ -24,23 +24,41 @@ public class ChatController : ControllerBase
         _tracker = tracker;
     }
 
-    [HttpGet("channels")]
-    public async Task<IActionResult> GetChannels()
+    [HttpGet("conversations")]
+    public async Task<IActionResult> GetConversations()
     {
-        // Simple implementation returning all channels for now
-        var channels = await _context.Channels.ToListAsync();
-        return Ok(channels);
+        var currentUserId = GetCurrentUserId();
+        if (currentUserId == null) return Unauthorized();
+
+        var conversations = await _context.Channels
+            .AsNoTracking()
+            .Include(c => c.Members)
+                .ThenInclude(m => m.User)
+            .Include(c => c.Messages)
+            .Where(c => c.Members.Any(m => m.UserId == currentUserId.Value))
+            .OrderByDescending(c => c.Messages.Max(m => (DateTime?)m.Timestamp) ?? DateTime.MinValue)
+            .ThenBy(c => c.Name)
+            .ToListAsync();
+
+        return Ok(conversations.Select(c => ToConversationDto(c, currentUserId.Value)));
     }
 
-    [HttpGet("channels/{channelId}/messages")]
-    public async Task<IActionResult> GetChannelMessages(Guid channelId)
+    [HttpGet("conversations/{conversationId:guid}/messages")]
+    public async Task<IActionResult> GetConversationMessages(Guid conversationId)
     {
+        var currentUserId = GetCurrentUserId();
+        if (currentUserId == null) return Unauthorized();
+
+        var canAccess = await _context.ConversationMembers
+            .AnyAsync(cm => cm.ChannelId == conversationId && cm.UserId == currentUserId.Value);
+        if (!canAccess) return Forbid();
+
         var messages = await _context.Messages
             .Include(m => m.Sender)
-            .Where(m => m.ChannelId == channelId)
-            .OrderByDescending(m => m.Timestamp) // usually you want pagination
-            .Take(50)
-            .Select(m => new {
+            .Where(m => m.ChannelId == conversationId)
+            .OrderBy(m => m.Timestamp)
+            .Select(m => new
+            {
                 m.Id,
                 m.Content,
                 m.Timestamp,
@@ -48,8 +66,122 @@ public class ChatController : ControllerBase
                 SenderUpn = m.Sender.AdUpn
             })
             .ToListAsync();
-            
-        return Ok(messages.OrderBy(m => m.Timestamp));
+
+        return Ok(messages);
+    }
+
+    [HttpPost("conversations/direct")]
+    public async Task<IActionResult> GetOrCreateDirectConversation([FromBody] DirectConversationRequest req)
+    {
+        var currentUserId = GetCurrentUserId();
+        if (currentUserId == null) return Unauthorized();
+        if (string.IsNullOrWhiteSpace(req.TargetUpn)) return BadRequest("Target user is required.");
+
+        var currentUser = await _context.Users.FindAsync(currentUserId.Value);
+        if (currentUser == null) return Unauthorized();
+
+        var targetUser = await GetOrCreateUserAsync(req.TargetUpn, req.TargetDisplayName);
+
+        if (targetUser.Id == currentUser.Id)
+        {
+            return BadRequest("You cannot start a direct conversation with yourself.");
+        }
+
+        var conversation = await _context.Channels
+            .Include(c => c.Members)
+                .ThenInclude(m => m.User)
+            .Include(c => c.Messages)
+            .FirstOrDefaultAsync(c =>
+                c.ConversationType == "Direct" &&
+                c.Members.Count == 2 &&
+                c.Members.Any(m => m.UserId == currentUser.Id) &&
+                c.Members.Any(m => m.UserId == targetUser.Id));
+
+        if (conversation == null)
+        {
+            conversation = new Channel
+            {
+                Id = Guid.NewGuid(),
+                Name = $"{currentUser.DisplayName}, {targetUser.DisplayName}",
+                IsPrivate = true,
+                ConversationType = "Direct",
+                CreatedByUserId = currentUser.Id,
+                Members = new List<ConversationMember>
+                {
+                    new() { ChannelId = Guid.Empty, UserId = currentUser.Id },
+                    new() { ChannelId = Guid.Empty, UserId = targetUser.Id }
+                }
+            };
+
+            _context.Channels.Add(conversation);
+            await _context.SaveChangesAsync();
+
+            conversation = await _context.Channels
+                .Include(c => c.Members)
+                    .ThenInclude(m => m.User)
+                .Include(c => c.Messages)
+                .FirstAsync(c => c.Id == conversation.Id);
+        }
+
+        return Ok(ToConversationDto(conversation, currentUser.Id));
+    }
+
+    [HttpPost("groups")]
+    public async Task<IActionResult> CreateGroup([FromBody] CreateGroupRequest req)
+    {
+        var currentUserId = GetCurrentUserId();
+        if (currentUserId == null) return Unauthorized();
+        if (string.IsNullOrWhiteSpace(req.Name)) return BadRequest("Group name is required.");
+
+        var currentUser = await _context.Users.FindAsync(currentUserId.Value);
+        if (currentUser == null) return Unauthorized();
+
+        var requestedMembers = req.Members
+            .Where(m => !string.IsNullOrWhiteSpace(m.AdUpn))
+            .GroupBy(m => m.AdUpn.Trim().ToLowerInvariant())
+            .Select(g => g.First())
+            .ToList();
+
+        var members = new List<User> { currentUser };
+
+        foreach (var requestedMember in requestedMembers)
+        {
+            var user = await GetOrCreateUserAsync(requestedMember.AdUpn, requestedMember.DisplayName);
+            if (members.All(m => m.Id != user.Id))
+            {
+                members.Add(user);
+            }
+        }
+
+        if (members.Count < 2)
+        {
+            return BadRequest("A group must contain at least two people.");
+        }
+
+        var group = new Channel
+        {
+            Id = Guid.NewGuid(),
+            Name = req.Name.Trim(),
+            IsPrivate = true,
+            ConversationType = "Group",
+            CreatedByUserId = currentUser.Id,
+            Members = members.Select(u => new ConversationMember
+            {
+                ChannelId = Guid.Empty,
+                UserId = u.Id
+            }).ToList()
+        };
+
+        _context.Channels.Add(group);
+        await _context.SaveChangesAsync();
+
+        group = await _context.Channels
+            .Include(c => c.Members)
+                .ThenInclude(m => m.User)
+            .Include(c => c.Messages)
+            .FirstAsync(c => c.Id == group.Id);
+
+        return Ok(ToConversationDto(group, currentUser.Id));
     }
 
     [HttpGet("users")]
@@ -61,50 +193,10 @@ public class ChatController : ControllerBase
         return Ok(users);
     }
 
-    [HttpPost("channels")]
-    public async Task<IActionResult> CreateChannel([FromBody] CreateChannelRequest req)
+    [HttpGet("online")]
+    public IActionResult GetOnlineUsers()
     {
-        var channel = new Channel { Id = Guid.NewGuid(), Name = req.Name };
-        _context.Channels.Add(channel);
-        await _context.SaveChangesAsync();
-        return Ok(channel);
-    }
-
-    [HttpPost("dm")]
-    public async Task<IActionResult> GetOrCreateDirectMessage([FromBody] DmRequest req)
-    {
-        var currentUserIdStr = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
-        if (!Guid.TryParse(currentUserIdStr, out var currentUserId)) return Unauthorized();
-
-        // Ensure target user is recorded in local DB
-        var targetUser = await _context.Users.FirstOrDefaultAsync(u => u.AdUpn == req.TargetUpn);
-        if (targetUser == null)
-        {
-            targetUser = new User
-            {
-                Id = Guid.NewGuid(),
-                AdUpn = req.TargetUpn,
-                DisplayName = req.TargetDisplayName ?? req.TargetUpn,
-                Email = req.TargetUpn
-            };
-            _context.Users.Add(targetUser);
-            await _context.SaveChangesAsync();
-        }
-
-        // Deterministic channel name based on UPNs
-        var myUpn = User.Identity?.Name ?? "";
-        var sortedNames = new[] { targetUser.AdUpn, myUpn }.OrderBy(n => n).ToArray();
-        var dmChannelName = $"DM_{sortedNames[0]}_{sortedNames[1]}";
-
-        var channel = await _context.Channels.FirstOrDefaultAsync(c => c.Name == dmChannelName);
-        if (channel == null)
-        {
-            channel = new Channel { Id = Guid.NewGuid(), Name = dmChannelName };
-            _context.Channels.Add(channel);
-            await _context.SaveChangesAsync();
-        }
-
-        return Ok(channel);
+        return Ok(_tracker.GetAllOnlineUsers());
     }
 
     [HttpGet("search")]
@@ -132,10 +224,10 @@ public class ChatController : ControllerBase
     [HttpGet("profile")]
     public async Task<IActionResult> GetProfile()
     {
-        var userIdStr = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
-        if (!Guid.TryParse(userIdStr, out var userId)) return Unauthorized();
+        var userId = GetCurrentUserId();
+        if (userId == null) return Unauthorized();
 
-        var user = await _context.Users.FindAsync(userId);
+        var user = await _context.Users.FindAsync(userId.Value);
         if (user == null) return NotFound();
 
         return Ok(new
@@ -159,13 +251,12 @@ public class ChatController : ControllerBase
         if (file.Length > 5 * 1024 * 1024)
             return BadRequest("File size cannot exceed 5MB.");
 
-        var userIdStr = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
-        if (!Guid.TryParse(userIdStr, out var userId)) return Unauthorized();
+        var userId = GetCurrentUserId();
+        if (userId == null) return Unauthorized();
 
-        var user = await _context.Users.FindAsync(userId);
+        var user = await _context.Users.FindAsync(userId.Value);
         if (user == null) return NotFound();
 
-        // Save to ContentRoot/Uploads/avatars/ — persists across wwwroot rebuilds
         var avatarsFolder = Path.Combine(env.ContentRootPath, "Uploads", "avatars");
         Directory.CreateDirectory(avatarsFolder);
 
@@ -184,15 +275,79 @@ public class ChatController : ControllerBase
 
         return Ok(new { avatarUrl = user.AvatarUrl });
     }
+
+    private Guid? GetCurrentUserId()
+    {
+        var userIdStr = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+        return Guid.TryParse(userIdStr, out var userId) ? userId : null;
+    }
+
+    private async Task<User> GetOrCreateUserAsync(string upn, string? displayName)
+    {
+        var normalizedUpn = upn.Trim();
+        var user = await _context.Users.FirstOrDefaultAsync(u => u.AdUpn == normalizedUpn);
+        if (user != null) return user;
+
+        user = new User
+        {
+            Id = Guid.NewGuid(),
+            AdUpn = normalizedUpn,
+            DisplayName = string.IsNullOrWhiteSpace(displayName) ? normalizedUpn : displayName.Trim(),
+            Email = normalizedUpn
+        };
+
+        _context.Users.Add(user);
+        await _context.SaveChangesAsync();
+        return user;
+    }
+
+    private object ToConversationDto(Channel conversation, Guid currentUserId)
+    {
+        var orderedMembers = conversation.Members
+            .Select(m => m.User)
+            .Where(u => u != null)
+            .OrderBy(u => u.DisplayName)
+            .ToList();
+
+        var otherMember = conversation.ConversationType == "Direct"
+            ? orderedMembers.FirstOrDefault(u => u.Id != currentUserId)
+            : null;
+
+        return new
+        {
+            conversation.Id,
+            conversation.Name,
+            Type = conversation.ConversationType,
+            IsGroup = conversation.ConversationType == "Group",
+            MemberCount = orderedMembers.Count,
+            Members = orderedMembers.Select(u => new
+            {
+                u.Id,
+                u.AdUpn,
+                u.DisplayName,
+                u.AvatarUrl
+            }),
+            OtherParticipantUpn = otherMember?.AdUpn,
+            OtherParticipantName = otherMember?.DisplayName,
+            LastMessageAt = conversation.Messages.Max(m => (DateTime?)m.Timestamp)
+        };
+    }
 }
 
-public class CreateChannelRequest
-{
-    public string Name { get; set; } = string.Empty;
-}
-
-public class DmRequest
+public class DirectConversationRequest
 {
     public string TargetUpn { get; set; } = string.Empty;
-    public string TargetDisplayName { get; set; } = string.Empty;
+    public string? TargetDisplayName { get; set; }
+}
+
+public class CreateGroupRequest
+{
+    public string Name { get; set; } = string.Empty;
+    public List<GroupMemberRequest> Members { get; set; } = new();
+}
+
+public class GroupMemberRequest
+{
+    public string AdUpn { get; set; } = string.Empty;
+    public string? DisplayName { get; set; }
 }

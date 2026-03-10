@@ -14,6 +14,7 @@ public class AppDbContext : DbContext
     public DbSet<Channel> Channels { get; set; }
     public DbSet<Message> Messages { get; set; }
     public DbSet<WorkspaceUser> WorkspaceUsers { get; set; }
+    public DbSet<ConversationMember> ConversationMembers { get; set; }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -31,6 +32,25 @@ public class AppDbContext : DbContext
             .HasOne(wu => wu.User)
             .WithMany(u => u.WorkspaceUsers)
             .HasForeignKey(wu => wu.UserId);
+
+        modelBuilder.Entity<ConversationMember>()
+            .HasKey(cm => new { cm.ChannelId, cm.UserId });
+
+        modelBuilder.Entity<ConversationMember>()
+            .HasOne(cm => cm.Channel)
+            .WithMany(c => c.Members)
+            .HasForeignKey(cm => cm.ChannelId);
+
+        modelBuilder.Entity<ConversationMember>()
+            .HasOne(cm => cm.User)
+            .WithMany(u => u.ConversationMemberships)
+            .HasForeignKey(cm => cm.UserId);
+
+        modelBuilder.Entity<Channel>()
+            .HasOne(c => c.CreatedByUser)
+            .WithMany()
+            .HasForeignKey(c => c.CreatedByUserId)
+            .OnDelete(DeleteBehavior.SetNull);
 
         modelBuilder.Entity<Message>()
             .HasOne(m => m.Sender)

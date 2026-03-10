@@ -1,15 +1,32 @@
 import { Injectable } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
 import * as signalR from '@microsoft/signalr';
-import { AuthService } from './auth.service';
-import { BehaviorSubject, Subject } from 'rxjs';
+import { BehaviorSubject, Observable, Subject, tap } from 'rxjs';
+
+export interface ConversationMember {
+    id: string;
+    adUpn: string;
+    displayName: string;
+    avatarUrl: string | null;
+}
+
+export interface ConversationSummary {
+    id: string;
+    name: string;
+    type: 'Direct' | 'Group';
+    isGroup: boolean;
+    memberCount: number;
+    members: ConversationMember[];
+    otherParticipantUpn?: string | null;
+    otherParticipantName?: string | null;
+    lastMessageAt?: string | null;
+}
 
 @Injectable({
     providedIn: 'root'
 })
 export class ChatService {
     private hubConnection: signalR.HubConnection | null = null;
-    // Use relative paths so the app works from a virtual directory (e.g., /Connect)
     private apiUrl = 'api/chat';
     private hubUrl = 'chathub';
 
@@ -26,9 +43,13 @@ export class ChatService {
         return this.hubConnection;
     }
 
-    constructor(private http: HttpClient, private authService: AuthService) { }
+    constructor(private http: HttpClient) { }
 
     public async startConnection() {
+        if (this.hubConnection) {
+            return;
+        }
+
         this.hubConnection = new signalR.HubConnectionBuilder()
             .withUrl(this.hubUrl, { withCredentials: true })
             .withAutomaticReconnect()
@@ -55,41 +76,39 @@ export class ChatService {
         }
     }
 
-    public getChannels() {
-        return this.http.get<any[]>(`${this.apiUrl}/channels`, { withCredentials: true });
+    public getConversations() {
+        return this.http.get<ConversationSummary[]>(`${this.apiUrl}/conversations`, { withCredentials: true });
     }
 
-    public getChannelMessages(channelId: string) {
-        return this.http.get<any[]>(`${this.apiUrl}/channels/${channelId}/messages`, { withCredentials: true })
-            .subscribe(messages => {
-                this.messagesSubject.next(messages);
-            });
+    public getConversationMessages(conversationId: string): Observable<any[]> {
+        return this.http.get<any[]>(`${this.apiUrl}/conversations/${conversationId}/messages`, { withCredentials: true })
+            .pipe(tap(messages => this.messagesSubject.next(messages)));
     }
 
-    public getOrCreateDm(targetUpn: string, targetDisplayName: string) {
-        return this.http.post<any>(`${this.apiUrl}/dm`, { targetUpn, targetDisplayName }, { withCredentials: true });
+    public getOrCreateDirectConversation(targetUpn: string, targetDisplayName: string) {
+        return this.http.post<ConversationSummary>(`${this.apiUrl}/conversations/direct`, { targetUpn, targetDisplayName }, { withCredentials: true });
     }
 
-    public async joinChannel(channelId: string) {
+    public createGroup(name: string, members: { adUpn: string, displayName?: string }[]) {
+        return this.http.post<ConversationSummary>(`${this.apiUrl}/groups`, { name, members }, { withCredentials: true });
+    }
+
+    public async joinConversation(conversationId: string) {
         if (this.hubConnection?.state === signalR.HubConnectionState.Connected) {
-            await this.hubConnection.invoke('JoinChannel', channelId);
+            await this.hubConnection.invoke('JoinConversation', conversationId);
         }
     }
 
-    public async leaveChannel(channelId: string) {
+    public async leaveConversation(conversationId: string) {
         if (this.hubConnection?.state === signalR.HubConnectionState.Connected) {
-            await this.hubConnection.invoke('LeaveChannel', channelId);
+            await this.hubConnection.invoke('LeaveConversation', conversationId);
         }
     }
 
-    public async sendMessage(channelId: string, content: string) {
+    public async sendMessage(conversationId: string, content: string) {
         if (this.hubConnection?.state === signalR.HubConnectionState.Connected) {
-            await this.hubConnection.invoke('SendMessageToChannel', channelId, content);
+            await this.hubConnection.invoke('SendMessageToConversation', conversationId, content);
         }
-    }
-
-    public getProfile() {
-        return this.http.get<any>(`${this.apiUrl}/profile`, { withCredentials: true });
     }
 
     public uploadAvatar(file: File) {
@@ -110,4 +129,3 @@ export class ChatService {
         return this.http.get<any[]>(`${this.apiUrl}/search?q=${encodeURIComponent(query)}`, { withCredentials: true });
     }
 }
-

@@ -1,6 +1,4 @@
 <div class="app-layout">
-
-    <!-- Sidebar -->
     <aside class="sidebar glass-panel">
         <div class="sidebar-header">
             <div class="logo-area">
@@ -9,13 +7,13 @@
             </div>
 
             <div class="search-container">
-                <input type="text" placeholder="Search Users..." [(ngModel)]="searchQuery" name="searchQuery"
+                <input type="text" placeholder="Search people..." [(ngModel)]="searchQuery" name="searchQuery"
                     (ngModelChange)="onSearchChange()" class="search-input">
                 <div class="search-spinner" *ngIf="isSearching" title="Searching…"></div>
                 @if (searchResults && searchResults.length > 0) {
                 <div class="search-dropdown">
                     @for (user of searchResults; track user.adUpn) {
-                    <div class="search-item" (click)="startDm(user)">
+                    <div class="search-item">
                         <div class="avatar-tiny">{{ user.displayName.charAt(0) || 'U' }}</div>
                         <div class="user-details">
                             <span class="name">
@@ -23,9 +21,12 @@
                                 <span class="status-dot" [class.online]="user.isOnline"
                                     [title]="user.isOnline ? 'Online' : 'Offline'"></span>
                             </span>
-                            <span class="upn" *ngIf="!user.isOnline && user.lastSeen">Last seen: {{ user.lastSeen |
-                                date:'short' }}</span>
-                            <span class="upn" *ngIf="user.isOnline || !user.lastSeen">{{ user.adUpn }}</span>
+                            <span class="upn">{{ user.adUpn }}</span>
+                        </div>
+                        <div class="search-actions">
+                            <button type="button" class="mini-action" (click)="startDirectConversation(user)">Chat</button>
+                            <button type="button" class="mini-action alt" *ngIf="isGroupCreatorOpen"
+                                (click)="addGroupMember(user)">Add</button>
                         </div>
                     </div>
                     }
@@ -34,15 +35,48 @@
             </div>
         </div>
 
-        <div class="channel-list">
-            <div class="section-title">CHANNELS</div>
+        <div class="sidebar-actions">
+            <button type="button" class="primary-action" (click)="toggleGroupCreator()">
+                {{ isGroupCreatorOpen ? 'Close Group Creator' : 'Create Group' }}
+            </button>
+        </div>
+
+        @if (isGroupCreatorOpen) {
+        <div class="group-creator glass-panel">
+            <input type="text" [(ngModel)]="newGroupName" placeholder="Group name" class="group-name-input">
+            <div class="selected-members" *ngIf="groupMembers.length > 0">
+                @for (member of groupMembers; track member.adUpn) {
+                <button type="button" class="member-chip" (click)="removeGroupMember(member.adUpn)">
+                    {{ member.displayName }}
+                </button>
+                }
+            </div>
+            <p class="group-hint">Search above, then use Add to include members.</p>
+            <p class="group-status">{{ groupCreateHint() }}</p>
+            <button type="button" class="primary-action" (click)="createGroup()"
+                [disabled]="!canCreateGroup()">
+                Save Group
+            </button>
+        </div>
+        }
+
+        <div class="conversation-list">
+            <div class="section-title">CHATS</div>
             <ul>
-                @for (channel of channels; track channel.id) {
-                <li [class.active]="activeChannel?.id === channel.id" (click)="selectChannel(channel)">
-                    <span class="hash" *ngIf="!channel.name?.startsWith('DM_')">#</span>
-                    <span class="status-dot channel-status" *ngIf="channel.name?.startsWith('DM_')"
-                        [class.online]="isDmOnline(channel.name)"></span>
-                    {{ formatChannelName(channel.name) || 'General' }}
+                @for (conversation of directConversations; track conversation.id) {
+                <li [class.active]="activeConversation?.id === conversation.id" (click)="selectConversation(conversation)">
+                    <span class="status-dot channel-status" [class.online]="isConversationOnline(conversation)"></span>
+                    {{ displayConversationName(conversation) }}
+                </li>
+                }
+            </ul>
+
+            <div class="section-title groups-title">GROUPS</div>
+            <ul>
+                @for (conversation of groupConversations; track conversation.id) {
+                <li [class.active]="activeConversation?.id === conversation.id" (click)="selectConversation(conversation)">
+                    <span class="group-pill">{{ conversation.memberCount }}</span>
+                    {{ displayConversationName(conversation) }}
                 </li>
                 }
             </ul>
@@ -72,31 +106,27 @@
         </div>
     </aside>
 
-    <!-- Main Chat Area -->
     <main class="chat-area">
-
-        <!-- Top Header -->
         <header class="chat-header glass-panel">
             <div class="header-info">
                 <h3>
-                    <span class="hash" *ngIf="!activeChannel?.name?.startsWith('DM_')">#</span>
-                    <span class="status-dot header-status" *ngIf="activeChannel?.name?.startsWith('DM_')"
-                        [class.online]="isDmOnline(activeChannel?.name)"></span>
+                    <span class="status-dot header-status" *ngIf="activeConversation?.type === 'Direct'"
+                        [class.online]="isConversationOnline(activeConversation)"></span>
+                    <span class="group-pill header-group-pill" *ngIf="activeConversation?.type === 'Group'">
+                        {{ activeConversation?.memberCount }}
+                    </span>
                     <ng-container *ngIf="isSessionReady; else loadingTitle">
-                        {{ formatChannelName(activeChannel?.name) || 'Loading...' }}
+                        {{ displayConversationName(activeConversation) || 'Choose a conversation' }}
                     </ng-container>
                     <ng-template #loadingTitle>
                         Loading…
                     </ng-template>
                 </h3>
-                <p class="topic" *ngIf="!activeChannel?.name?.startsWith('DM_')">Company-wide discussion and
-                    announcements</p>
-                <p class="topic dm-status" *ngIf="activeChannel?.name?.startsWith('DM_')">
-                    {{ isDmOnline(activeChannel?.name) ? 'Online' : 'Offline' }}
+                <p class="topic">
+                    {{ conversationSubtitle(activeConversation) || 'One-to-one chat and team groups live here.' }}
                 </p>
             </div>
             <div class="header-actions">
-                <!-- Placeholder for WebRTC Voice/Video buttons Phase 3 -->
                 <button class="call-btn voice-btn" title="Start Voice Call" (click)="startCall(false)">
                     <svg fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
@@ -112,7 +142,6 @@
             </div>
         </header>
 
-        <!-- Chat History -->
         <div class="chat-history">
             <div class="date-divider"><span>Today</span></div>
 
@@ -140,13 +169,12 @@
             @if (messages.length === 0) {
             <div class="empty-state">
                 <div class="empty-icon">💬</div>
-                <p>No messages in this channel yet.</p>
-                <span>Be the first to say hello!</span>
+                <p>No messages yet.</p>
+                <span>Start the conversation here.</span>
             </div>
             }
         </div>
 
-        <!-- Input Area -->
         <div class="chat-input-area glass-panel">
             <form (ngSubmit)="sendMessage()" class="input-wrapper">
                 <button type="button" class="attachment-btn">
@@ -156,9 +184,9 @@
                     </svg>
                 </button>
                 <input type="text" [(ngModel)]="newMessage" name="newMessage"
-                    placeholder="Message {{ activeChannel?.name?.startsWith('DM_') ? '' : '#' }}{{ formatChannelName(activeChannel?.name) || 'channel' }}"
-                    autocomplete="off" />
-                <button type="submit" class="send-btn" [disabled]="!newMessage.trim()">
+                    placeholder="Message {{ displayConversationName(activeConversation) || 'conversation' }}"
+                    autocomplete="off" [disabled]="!activeConversation" />
+                <button type="submit" class="send-btn" [disabled]="!newMessage.trim() || !activeConversation">
                     <svg fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
                             d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
@@ -166,10 +194,8 @@
                 </button>
             </form>
         </div>
-
     </main>
 
-    <!-- Incoming Call Modal -->
     @if (incomingCall) {
     <div class="modal-overlay">
         <div class="call-modal glass-panel">
@@ -184,7 +210,6 @@
     </div>
     }
 
-    <!-- Active Call Overlay -->
     @if (isCallActive) {
     <div class="active-call-overlay">
         <div class="video-container">
@@ -198,5 +223,4 @@
         </div>
     </div>
     }
-
 </div>

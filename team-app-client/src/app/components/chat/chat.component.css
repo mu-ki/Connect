@@ -21,6 +21,66 @@
     border-bottom: 1px solid var(--glass-border);
 }
 
+.sidebar-actions {
+    padding: 16px 20px 0;
+}
+
+.primary-action {
+    width: 100%;
+    border: 0;
+    border-radius: 12px;
+    padding: 12px 14px;
+    background: linear-gradient(135deg, #0f766e, #0ea5a4);
+    color: #f8fafc;
+    font-weight: 600;
+}
+
+.primary-action:disabled {
+    opacity: 0.5;
+}
+
+.group-creator {
+    margin: 16px 20px 0;
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.group-name-input {
+    width: 100%;
+    border: 1px solid var(--glass-border);
+    background: rgba(255, 255, 255, 0.04);
+    color: var(--text-primary);
+    border-radius: 10px;
+    padding: 10px 12px;
+}
+
+.selected-members {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.member-chip {
+    border: 0;
+    border-radius: 999px;
+    padding: 6px 10px;
+    background: rgba(14, 165, 164, 0.15);
+    color: var(--text-primary);
+}
+
+.group-hint {
+    color: var(--text-secondary);
+    font-size: 12px;
+}
+
+.group-status {
+    color: #99f6e4;
+    font-size: 12px;
+    min-height: 18px;
+}
+
 .logo-area {
     display: flex;
     align-items: center;
@@ -41,10 +101,14 @@ h2 {
     letter-spacing: -0.5px;
 }
 
-.channel-list {
+.conversation-list {
     flex: 1;
     padding: 20px 0;
     overflow-y: auto;
+}
+
+.groups-title {
+    margin-top: 20px;
 }
 
 .section-title {
@@ -83,6 +147,22 @@ li.active {
     background: rgba(99, 102, 241, 0.15);
     color: var(--text-primary);
     border-left: 3px solid var(--accent-color);
+}
+
+.group-pill {
+    min-width: 24px;
+    height: 24px;
+    border-radius: 999px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 11px;
+    background: rgba(14, 165, 164, 0.18);
+    color: #99f6e4;
+}
+
+.header-group-pill {
+    margin-right: 2px;
 }
 
 .hash {
@@ -211,6 +291,25 @@ li.active {
     font-size: 13px;
     color: var(--text-secondary);
     margin-top: 4px;
+}
+
+.search-actions {
+    display: flex;
+    gap: 8px;
+    margin-left: auto;
+}
+
+.mini-action {
+    border: 0;
+    border-radius: 8px;
+    padding: 6px 10px;
+    background: rgba(14, 165, 164, 0.14);
+    color: var(--text-primary);
+    font-size: 12px;
+}
+
+.mini-action.alt {
+    background: rgba(255, 255, 255, 0.08);
 }
 
 .header-actions {

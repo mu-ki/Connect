@@ -13,7 +13,7 @@ echo.
 
 echo [1/3] Building Angular Client...
 cd team-app-client
-call npx -p @angular/cli ng build --configuration production
+call npx -p @angular/cli ng build --configuration production --base-href /connect/
 if %errorlevel% neq 0 (
     echo.
     echo [ERROR] Angular build failed!

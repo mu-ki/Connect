@@ -17,4 +17,5 @@ public class User
 
     public ICollection<Message> Messages { get; set; } = new List<Message>();
     public ICollection<WorkspaceUser> WorkspaceUsers { get; set; } = new List<WorkspaceUser>();
+    public ICollection<ConversationMember> ConversationMemberships { get; set; } = new List<ConversationMember>();
 }

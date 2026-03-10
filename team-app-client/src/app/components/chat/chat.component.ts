@@ -1,8 +1,8 @@
-import { Component, OnInit, OnDestroy, ElementRef, ViewChild, ChangeDetectorRef } from '@angular/core';
+import { Component, OnDestroy, OnInit, ElementRef, ViewChild, ChangeDetectorRef } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { Subject, debounceTime, distinctUntilChanged, switchMap, tap, of, firstValueFrom, finalize } from 'rxjs';
-import { ChatService } from '../../services/chat.service';
+import { ChatService, ConversationSummary } from '../../services/chat.service';
 import { AuthService } from '../../services/auth.service';
 import { WebrtcService } from '../../services/webrtc.service';
 import { Router } from '@angular/router';
@@ -15,30 +15,31 @@ import { Router } from '@angular/router';
     styleUrl: './chat.component.css'
 })
 export class ChatComponent implements OnInit, OnDestroy {
-    channels: any[] = [];
-    activeChannel: any = null;
+    directConversations: ConversationSummary[] = [];
+    groupConversations: ConversationSummary[] = [];
+    activeConversation: ConversationSummary | null = null;
     messages: any[] = [];
     newMessage = '';
     currentUser: string | null = '';
     currentUpn: string | null = '';
 
-    // Presence State
     onlineUsers = new Set<string>();
 
-    // Search State
     searchQuery = '';
     searchResults: any[] = [];
     isSearching = false;
     private searchTerms = new Subject<string>();
 
-    // Call State
+    isGroupCreatorOpen = false;
+    newGroupName = '';
+    groupMembers: any[] = [];
+
     isCallActive = false;
     incomingCall: { callerUpn: string, callerName: string, isVideo: boolean } | null = null;
 
     @ViewChild('localVideo') localVideoRef!: ElementRef<HTMLVideoElement>;
     @ViewChild('remoteVideo') remoteVideoRef!: ElementRef<HTMLVideoElement>;
 
-    // Avatar
     currentUserAvatarUrl: string | null = null;
     userAvatarMap: Record<string, string | null> = {};
     userDisplayNameMap: Record<string, string> = {};
@@ -56,7 +57,6 @@ export class ChatComponent implements OnInit, OnDestroy {
     public isSessionReady = false;
 
     async ngOnInit() {
-        // Preload cached user quickly (helps avoid UI flicker on refresh)
         const cached = localStorage.getItem('connect_user');
         if (cached) {
             try {
@@ -69,9 +69,6 @@ export class ChatComponent implements OnInit, OnDestroy {
         }
 
         this.authService.user$.subscribe(user => {
-            // Only redirect after the first refresh attempt has completed.
-            // Without this, the initial null value emitted by the BehaviorSubject
-            // immediately sends the user to the login page even if the refresh will succeed.
             if (!this.hasCheckedSession) return;
 
             if (!user) {
@@ -80,11 +77,9 @@ export class ChatComponent implements OnInit, OnDestroy {
             }
 
             this.currentUser = user.displayName || user.email || user.adUpn;
-            // Prefer the AD UPN (canonical identifier) for DM resolution
             this.currentUpn = user.adUpn || user.email;
         });
 
-        // Search pipeline: debounce + cancel previous request
         this.searchTerms.pipe(
             debounceTime(300),
             distinctUntilChanged(),
@@ -104,7 +99,6 @@ export class ChatComponent implements OnInit, OnDestroy {
             }
         });
 
-        // Ensure we have a valid session before connecting
         await firstValueFrom(this.authService.refresh().pipe(
             finalize(() => {
                 this.hasCheckedSession = true;
@@ -113,23 +107,18 @@ export class ChatComponent implements OnInit, OnDestroy {
         ));
 
         this.loadUserProfiles();
-
         await this.chatService.startConnection();
 
-        // Assign SignalR hub to WebRTC service
         if (this.chatService.hubConnectionRef) {
             this.webrtcService.setHubConnection(this.chatService.hubConnectionRef);
         }
 
-        // Fetch initial online users
         this.chatService.getOnlineUsers().subscribe(users => {
             users.forEach(u => this.onlineUsers.add(u.toLowerCase()));
         });
 
-        // Listen for presence events
         this.chatService.userOnline$.subscribe(upn => {
             this.onlineUsers.add(upn.toLowerCase());
-            // Update search results if they are visible
             const user = this.searchResults.find(u => u.adUpn.toLowerCase() === upn.toLowerCase());
             if (user) {
                 user.isOnline = true;
@@ -138,7 +127,6 @@ export class ChatComponent implements OnInit, OnDestroy {
 
         this.chatService.userOffline$.subscribe(upn => {
             this.onlineUsers.delete(upn.toLowerCase());
-            // Update search results
             const user = this.searchResults.find(u => u.adUpn.toLowerCase() === upn.toLowerCase());
             if (user) {
                 user.isOnline = false;
@@ -146,13 +134,12 @@ export class ChatComponent implements OnInit, OnDestroy {
             }
         });
 
-        // Subscribe to WebRTC events
         this.webrtcService.onIncomingCall.subscribe(data => {
             this.incomingCall = data;
         });
 
         this.webrtcService.onRemoteStreamAdd.subscribe(stream => {
-            if (this.remoteVideoRef && this.remoteVideoRef.nativeElement) {
+            if (this.remoteVideoRef?.nativeElement) {
                 this.remoteVideoRef.nativeElement.srcObject = stream;
             }
         });
@@ -162,12 +149,7 @@ export class ChatComponent implements OnInit, OnDestroy {
             this.incomingCall = null;
         });
 
-        this.chatService.getChannels().subscribe(chans => {
-            this.channels = chans;
-            if (this.channels.length > 0) {
-                this.selectChannel(this.channels[0]);
-            }
-        });
+        this.loadConversations();
 
         this.chatService.messages$.subscribe(msgs => {
             this.messages = msgs;
@@ -175,99 +157,137 @@ export class ChatComponent implements OnInit, OnDestroy {
         });
     }
 
-    async selectChannel(channel: any) {
-        if (this.activeChannel) {
-            this.chatService.leaveChannel(this.activeChannel.id);
-        }
-        this.activeChannel = channel;
-        this.chatService.joinChannel(channel.id);
-        this.chatService.getChannelMessages(channel.id);
+    loadConversations() {
+        this.chatService.getConversations().subscribe(conversations => {
+            this.directConversations = conversations.filter(c => c.type === 'Direct');
+            this.groupConversations = conversations.filter(c => c.type === 'Group');
+
+            const activeId = this.activeConversation?.id;
+            const nextActive = conversations.find(c => c.id === activeId) ?? conversations[0] ?? null;
+            if (nextActive) {
+                this.selectConversation(nextActive);
+            } else {
+                this.activeConversation = null;
+                this.messages = [];
+            }
+        });
     }
 
-    formatChannelName(name: string): string {
-        if (!name) return '';
-        if (!name.startsWith('DM_')) return name;
-
-        const parts = name.split('_');
-        if (parts.length >= 3) {
-            const upn1 = parts[1];
-            const upn2 = parts[2];
-
-            // If we know current user UPN, pick the other one.
-            let targetUpn: string | null = null;
-            if (this.currentUpn) {
-                if (upn1.toLowerCase() === this.currentUpn.toLowerCase()) {
-                    targetUpn = upn2;
-                } else if (upn2.toLowerCase() === this.currentUpn.toLowerCase()) {
-                    targetUpn = upn1;
-                }
-            }
-
-            // If we still don't know which side we are, pick the UPN which is not the cached current user display.
-            if (!targetUpn) {
-                const display1 = this.userDisplayNameMap[upn1.toLowerCase()];
-                const display2 = this.userDisplayNameMap[upn2.toLowerCase()];
-                if (display1 && !display2) {
-                    targetUpn = upn1;
-                } else if (!display1 && display2) {
-                    targetUpn = upn2;
-                }
-            }
-
-            // Fallback to upn1 if still unknown
-            if (!targetUpn) {
-                targetUpn = upn1;
-            }
-
-            // If we have a cached display name for the UPN, use it.
-            const cached = this.userDisplayNameMap[targetUpn.toLowerCase()];
-            if (cached) return cached;
-
-            // Clean up the UPN to look like a Display Name (e.g. nisha.kurian@... -> Nisha Kurian)
-            const namePart = targetUpn.split('@')[0];
-            return namePart.split('.').map(s => s.charAt(0).toUpperCase() + s.slice(1)).join(' ');
+    async selectConversation(conversation: ConversationSummary) {
+        if (this.activeConversation?.id === conversation.id) {
+            return;
         }
-        return name;
+
+        if (this.activeConversation) {
+            await this.chatService.leaveConversation(this.activeConversation.id);
+        }
+
+        this.activeConversation = conversation;
+        await this.chatService.joinConversation(conversation.id);
+        this.chatService.getConversationMessages(conversation.id).subscribe();
     }
 
-    getDmTargetUpn(name: string): string | null {
-        if (!name || !name.startsWith('DM_')) return null;
-        const parts = name.split('_');
-        if (parts.length >= 3) {
-            const upn1 = parts[1];
-            const upn2 = parts[2];
-            if (this.currentUpn && upn1.toLowerCase() === this.currentUpn.toLowerCase()) return upn2;
-            return upn1;
+    displayConversationName(conversation: ConversationSummary | null): string {
+        if (!conversation) return '';
+        if (conversation.type === 'Direct') {
+            return conversation.otherParticipantName || this.formatUpn(conversation.otherParticipantUpn || conversation.name);
         }
-        return null;
+        return conversation.name;
     }
 
-    isDmOnline(channelName: string): boolean {
-        const targetUpn = this.getDmTargetUpn(channelName);
-        if (!targetUpn) return false;
-        return this.onlineUsers.has(targetUpn.toLowerCase());
+    conversationSubtitle(conversation: ConversationSummary | null): string {
+        if (!conversation) return '';
+        if (conversation.type === 'Direct') {
+            return this.isConversationOnline(conversation) ? 'Online' : 'Offline';
+        }
+
+        const others = Math.max((conversation.memberCount || 1) - 1, 0);
+        return `${others} other ${others === 1 ? 'member' : 'members'}`;
+    }
+
+    isConversationOnline(conversation: ConversationSummary | null): boolean {
+        const targetUpn = conversation?.otherParticipantUpn;
+        return !!targetUpn && this.onlineUsers.has(targetUpn.toLowerCase());
+    }
+
+    formatUpn(value: string): string {
+        const namePart = value.split('@')[0];
+        return namePart.split('.').map(s => s.charAt(0).toUpperCase() + s.slice(1)).join(' ');
     }
 
     onSearchChange() {
         this.searchTerms.next(this.searchQuery || '');
     }
 
-    startDm(targetUser: any) {
+    startDirectConversation(targetUser: any) {
         this.searchQuery = '';
         this.searchResults = [];
-        this.chatService.getOrCreateDm(targetUser.adUpn, targetUser.displayName).subscribe(dmChannel => {
-            // Check if it's already in the list
-            const exists = this.channels.find(c => c.id === dmChannel.id);
-            if (!exists) {
-                this.channels.unshift(dmChannel);
+        this.chatService.getOrCreateDirectConversation(targetUser.adUpn, targetUser.displayName).subscribe(conversation => {
+            const existing = this.directConversations.find(c => c.id === conversation.id);
+            if (!existing) {
+                this.directConversations = [conversation, ...this.directConversations];
             }
-            this.selectChannel(dmChannel);
+            this.selectConversation(conversation);
         });
     }
 
+    toggleGroupCreator() {
+        this.isGroupCreatorOpen = !this.isGroupCreatorOpen;
+        if (!this.isGroupCreatorOpen) {
+            this.resetGroupCreator();
+        }
+    }
+
+    addGroupMember(user: any) {
+        if (this.groupMembers.some(member => member.adUpn.toLowerCase() === user.adUpn.toLowerCase())) {
+            return;
+        }
+
+        this.groupMembers = [...this.groupMembers, user];
+        this.searchQuery = '';
+        this.searchResults = [];
+    }
+
+    removeGroupMember(adUpn: string) {
+        this.groupMembers = this.groupMembers.filter(member => member.adUpn !== adUpn);
+    }
+
+    createGroup() {
+        if (!this.newGroupName.trim() || this.groupMembers.length === 0) {
+            return;
+        }
+
+        const members = this.groupMembers.map(member => ({
+            adUpn: member.adUpn,
+            displayName: member.displayName
+        }));
+
+        this.chatService.createGroup(this.newGroupName.trim(), members).subscribe(group => {
+            this.groupConversations = [group, ...this.groupConversations];
+            this.resetGroupCreator();
+            this.selectConversation(group);
+        });
+    }
+
+    canCreateGroup(): boolean {
+        return !!this.newGroupName.trim() && this.groupMembers.length > 0;
+    }
+
+    groupCreateHint(): string {
+        if (!this.newGroupName.trim()) {
+            return 'Enter a group name.';
+        }
+
+        if (this.groupMembers.length === 0) {
+            return 'Add at least one member from search to enable Save Group.';
+        }
+
+        return `${this.groupMembers.length} member${this.groupMembers.length === 1 ? '' : 's'} selected.`;
+    }
+
     async sendMessage() {
-        if (!this.newMessage.trim() || !this.activeChannel) return;
-        await this.chatService.sendMessage(this.activeChannel.id, this.newMessage);
+        if (!this.newMessage.trim() || !this.activeConversation) return;
+        await this.chatService.sendMessage(this.activeConversation.id, this.newMessage);
         this.newMessage = '';
     }
 
@@ -311,9 +331,17 @@ export class ChatComponent implements OnInit, OnDestroy {
     }
 
     ngOnDestroy() {
-        if (this.activeChannel) {
-            this.chatService.leaveChannel(this.activeChannel.id);
+        if (this.activeConversation) {
+            this.chatService.leaveConversation(this.activeConversation.id);
         }
+    }
+
+    private resetGroupCreator() {
+        this.isGroupCreatorOpen = false;
+        this.newGroupName = '';
+        this.groupMembers = [];
+        this.searchQuery = '';
+        this.searchResults = [];
     }
 
     private scrollToBottom() {
@@ -325,21 +353,13 @@ export class ChatComponent implements OnInit, OnDestroy {
         }, 50);
     }
 
-    // --- Calling Methods --- //
-
     startCall(isVideo: boolean) {
-        if (!this.activeChannel || !this.activeChannel.name.startsWith('DM_')) {
-            alert('Calling is only supported in Direct Messages for now.');
+        if (!this.activeConversation || this.activeConversation.type !== 'Direct' || !this.activeConversation.otherParticipantUpn) {
+            alert('Calling is only supported in one-to-one conversations.');
             return;
         }
 
-        const targetUpn = this.getDmTargetUpn(this.activeChannel.name);
-        if (!targetUpn) {
-            console.error("Could not determine target UPN for call.");
-            return;
-        }
-
-        this.webrtcService.initiateCall(targetUpn, isVideo);
+        this.webrtcService.initiateCall(this.activeConversation.otherParticipantUpn, isVideo);
         this.isCallActive = true;
         this.attachLocalStream();
     }
@@ -348,8 +368,6 @@ export class ChatComponent implements OnInit, OnDestroy {
         if (!this.incomingCall) return;
         this.webrtcService.answerCall(this.incomingCall.callerUpn, this.incomingCall.isVideo);
         this.isCallActive = true;
-
-        const callData = this.incomingCall;
         this.incomingCall = null;
         this.attachLocalStream();
     }
@@ -367,7 +385,7 @@ export class ChatComponent implements OnInit, OnDestroy {
 
     private attachLocalStream() {
         setTimeout(() => {
-            if (this.localVideoRef && this.localVideoRef.nativeElement && this.webrtcService.localStream) {
+            if (this.localVideoRef?.nativeElement && this.webrtcService.localStream) {
                 this.localVideoRef.nativeElement.srcObject = this.webrtcService.localStream;
             }
         }, 500);

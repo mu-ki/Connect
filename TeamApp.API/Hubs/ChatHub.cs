@@ -104,7 +104,8 @@ public class ChatHub : Hub
             Id = message.Id,
             Content = message.Content,
             Timestamp = message.Timestamp,
-            SenderName = senderName
+            SenderName = senderName,
+            SenderUpn = sender?.AdUpn ?? Context.User?.Identity?.Name
         };
 
         // Broadcast to everyone in that channel

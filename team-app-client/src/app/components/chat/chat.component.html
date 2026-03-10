@@ -112,7 +112,7 @@
             <div class="date-divider"><span>Today</span></div>
 
             @for (msg of messages; track msg.id) {
-            <div class="message-card" [class.own-message]="msg.senderName === currentUser">
+            <div class="message-card" [class.own-message]="msg.senderUpn?.toLowerCase() === currentUpn?.toLowerCase()">
                 <div class="avatar-small">
                     @if (userAvatarMap[msg.senderName]) {
                     <img [src]="userAvatarMap[msg.senderName]!" alt="" class="avatar-img">

@@ -44,7 +44,8 @@ public class ChatController : ControllerBase
                 m.Id,
                 m.Content,
                 m.Timestamp,
-                SenderName = m.Sender.DisplayName
+                SenderName = m.Sender.DisplayName,
+                SenderUpn = m.Sender.AdUpn
             })
             .ToListAsync();
             

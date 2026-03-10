@@ -7,6 +7,11 @@ TeamApp.API/bin/
 TeamApp.API/obj/
 TeamApp.API/wwwroot/
 
+# Ignore Angular build outputs and dependencies
+team-app-client/dist/
+team-app-client/node_modules/
+team-app-client/.angular/cache/
+
 # Ignore user-specific files
 *.user
 *.suo

@@ -1,0 +1,196 @@
+<div class="app-layout">
+
+    <!-- Sidebar -->
+    <aside class="sidebar glass-panel">
+        <div class="sidebar-header">
+            <div class="logo-area">
+                <div class="logo-icon small">C</div>
+                <h2>Connect</h2>
+            </div>
+
+            <div class="search-container">
+                <input type="text" placeholder="Search Users..." [(ngModel)]="searchQuery" name="searchQuery"
+                    (ngModelChange)="onSearchChange()" class="search-input">
+                @if (searchResults && searchResults.length > 0) {
+                <div class="search-dropdown">
+                    @for (user of searchResults; track user.adUpn) {
+                    <div class="search-item" (click)="startDm(user)">
+                        <div class="avatar-tiny">{{ user.displayName.charAt(0) || 'U' }}</div>
+                        <div class="user-details">
+                            <span class="name">
+                                {{ user.displayName }}
+                                <span class="status-dot" [class.online]="user.isOnline"
+                                    [title]="user.isOnline ? 'Online' : 'Offline'"></span>
+                            </span>
+                            <span class="upn" *ngIf="!user.isOnline && user.lastSeen">Last seen: {{ user.lastSeen |
+                                date:'short' }}</span>
+                            <span class="upn" *ngIf="user.isOnline || !user.lastSeen">{{ user.adUpn }}</span>
+                        </div>
+                    </div>
+                    }
+                </div>
+                }
+            </div>
+        </div>
+
+        <div class="channel-list">
+            <div class="section-title">CHANNELS</div>
+            <ul>
+                @for (channel of channels; track channel.id) {
+                <li [class.active]="activeChannel?.id === channel.id" (click)="selectChannel(channel)">
+                    <span class="hash" *ngIf="!channel.name?.startsWith('DM_')">#</span>
+                    <span class="status-dot channel-status" *ngIf="channel.name?.startsWith('DM_')"
+                        [class.online]="isDmOnline(channel.name)"></span>
+                    {{ formatChannelName(channel.name) || 'General' }}
+                </li>
+                }
+            </ul>
+        </div>
+
+        <div class="user-profile">
+            <div class="avatar avatar-clickable" (click)="triggerAvatarUpload()" title="Change profile picture">
+                @if (currentUserAvatarUrl) {
+                <img [src]="currentUserAvatarUrl" alt="Avatar" class="avatar-img">
+                } @else {
+                {{ currentUser?.charAt(0) || 'U' }}
+                }
+                <div class="avatar-overlay">📷</div>
+            </div>
+            <div class="user-info">
+                <div class="name">{{ currentUser || 'User' }}</div>
+                <div class="status">Online</div>
+            </div>
+            <button class="icon-btn" (click)="logout()" title="Logout">
+                <svg fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                        d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+                </svg>
+            </button>
+            <input #avatarFileInput type="file" accept="image/*" style="display:none"
+                (change)="onAvatarFileSelected($event)">
+        </div>
+    </aside>
+
+    <!-- Main Chat Area -->
+    <main class="chat-area">
+
+        <!-- Top Header -->
+        <header class="chat-header glass-panel">
+            <div class="header-info">
+                <h3>
+                    <span class="hash" *ngIf="!activeChannel?.name?.startsWith('DM_')">#</span>
+                    <span class="status-dot header-status" *ngIf="activeChannel?.name?.startsWith('DM_')"
+                        [class.online]="isDmOnline(activeChannel?.name)"></span>
+                    {{ formatChannelName(activeChannel?.name) || 'Loading...' }}
+                </h3>
+                <p class="topic" *ngIf="!activeChannel?.name?.startsWith('DM_')">Company-wide discussion and
+                    announcements</p>
+                <p class="topic dm-status" *ngIf="activeChannel?.name?.startsWith('DM_')">
+                    {{ isDmOnline(activeChannel?.name) ? 'Online' : 'Offline' }}
+                </p>
+            </div>
+            <div class="header-actions">
+                <!-- Placeholder for WebRTC Voice/Video buttons Phase 3 -->
+                <button class="call-btn voice-btn" title="Start Voice Call" (click)="startCall(false)">
+                    <svg fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                            d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z" />
+                    </svg>
+                </button>
+                <button class="call-btn video-btn" title="Start Video Call" (click)="startCall(true)">
+                    <svg fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                            d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                    </svg>
+                </button>
+            </div>
+        </header>
+
+        <!-- Chat History -->
+        <div class="chat-history">
+            <div class="date-divider"><span>Today</span></div>
+
+            @for (msg of messages; track msg.id) {
+            <div class="message-card" [class.own-message]="msg.senderName === currentUser">
+                <div class="avatar-small">
+                    @if (userAvatarMap[msg.senderName]) {
+                    <img [src]="userAvatarMap[msg.senderName]!" alt="" class="avatar-img">
+                    } @else {
+                    {{ msg.senderName?.charAt(0) || 'U' }}
+                    }
+                </div>
+                <div class="message-content">
+                    <div class="message-meta">
+                        <span class="sender">{{ msg.senderName }}</span>
+                        <span class="time">{{ msg.timestamp | date:'shortTime' }}</span>
+                    </div>
+                    <div class="bubble glass-panel">
+                        {{ msg.content }}
+                    </div>
+                </div>
+            </div>
+            }
+
+            @if (messages.length === 0) {
+            <div class="empty-state">
+                <div class="empty-icon">💬</div>
+                <p>No messages in this channel yet.</p>
+                <span>Be the first to say hello!</span>
+            </div>
+            }
+        </div>
+
+        <!-- Input Area -->
+        <div class="chat-input-area glass-panel">
+            <form (ngSubmit)="sendMessage()" class="input-wrapper">
+                <button type="button" class="attachment-btn">
+                    <svg fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                            d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
+                    </svg>
+                </button>
+                <input type="text" [(ngModel)]="newMessage" name="newMessage"
+                    placeholder="Message {{ activeChannel?.name?.startsWith('DM_') ? '' : '#' }}{{ formatChannelName(activeChannel?.name) || 'channel' }}"
+                    autocomplete="off" />
+                <button type="submit" class="send-btn" [disabled]="!newMessage.trim()">
+                    <svg fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                            d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
+                    </svg>
+                </button>
+            </form>
+        </div>
+
+    </main>
+
+    <!-- Incoming Call Modal -->
+    @if (incomingCall) {
+    <div class="modal-overlay">
+        <div class="call-modal glass-panel">
+            <div class="caller-avatar">{{ incomingCall.callerName.charAt(0) || '?' }}</div>
+            <h3>{{ incomingCall.callerName }} is calling...</h3>
+            <p>{{ incomingCall.isVideo ? 'Incoming Video Call' : 'Incoming Voice Call' }}</p>
+            <div class="call-modal-actions">
+                <button class="accept-btn" (click)="acceptCall()">Accept</button>
+                <button class="reject-btn" (click)="rejectCall()">Decline</button>
+            </div>
+        </div>
+    </div>
+    }
+
+    <!-- Active Call Overlay -->
+    @if (isCallActive) {
+    <div class="active-call-overlay">
+        <div class="video-container">
+            <video #remoteVideo class="remote-video" autoplay playsinline></video>
+            <video #localVideo class="local-video" autoplay playsinline muted></video>
+        </div>
+        <div class="call-controls glass-panel">
+            <button class="control-btn end-call-btn" (click)="endCall()">
+                End Call
+            </button>
+        </div>
+    </div>
+    }
+
+</div>

@@ -171,11 +171,16 @@ public class AuthController : ControllerBase
 
     private void SetAuthCookies(string accessToken, DateTime accessExpiry, string refreshToken, DateTime refreshExpiry)
     {
+        // When running over HTTPS we use SameSite=None so that JS POSTs (refresh) include the cookies.
+        // When running over HTTP (local dev), fallback to Lax so cookies are accepted by browsers.
+        var sameSite = Request.IsHttps ? SameSiteMode.None : SameSiteMode.Lax;
+        var secure = Request.IsHttps;
+
         var accessCookieOptions = new CookieOptions
         {
             HttpOnly = true,
-            Secure = Request.IsHttps,
-            SameSite = SameSiteMode.Lax,
+            Secure = secure,
+            SameSite = sameSite,
             Expires = accessExpiry,
             Path = "/"
         };
@@ -183,8 +188,8 @@ public class AuthController : ControllerBase
         var refreshCookieOptions = new CookieOptions
         {
             HttpOnly = true,
-            Secure = Request.IsHttps,
-            SameSite = SameSiteMode.Lax,
+            Secure = secure,
+            SameSite = sameSite,
             Expires = refreshExpiry,
             Path = "/"
         };

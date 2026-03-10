@@ -1,46 +1,57 @@
 import { Injectable } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
-import { BehaviorSubject, tap } from 'rxjs';
+import { BehaviorSubject, catchError, of, tap } from 'rxjs';
 
 @Injectable({
   providedIn: 'root'
 })
 export class AuthService {
-  // Use relative API paths so the app works from a virtual directory like /Connect
   private apiUrl = 'api/auth';
-  private tokenSubject = new BehaviorSubject<string | null>(localStorage.getItem('token'));
-  public token$ = this.tokenSubject.asObservable();
+  private userSubject = new BehaviorSubject<any | null>(null);
+  public user$ = this.userSubject.asObservable();
 
-  constructor(private http: HttpClient) { }
+  constructor(private http: HttpClient) {
+    // Attempt to refresh token on startup (cookie-based session)
+    this.refresh().subscribe({
+      next: () => {},
+      error: () => this.userSubject.next(null)
+    });
+  }
 
   login(username: string, password: string = 'password') {
-    return this.http.post<{ token: string, user: any }>(`${this.apiUrl}/login`, { username, password })
+    return this.http.post<any>(`${this.apiUrl}/login`, { username, password }, { withCredentials: true })
       .pipe(
-        tap(response => {
-          localStorage.setItem('token', response.token);
-          this.tokenSubject.next(response.token);
+        tap(user => this.userSubject.next(user))
+      );
+  }
+
+  refresh() {
+    return this.http.post<any>(`${this.apiUrl}/refresh`, {}, { withCredentials: true })
+      .pipe(
+        tap(user => this.userSubject.next(user)),
+        catchError(() => {
+          this.userSubject.next(null);
+          return of(null);
         })
       );
   }
 
+  getProfile() {
+    return this.http.get<any>(`${this.apiUrl}/profile`, { withCredentials: true });
+  }
+
   logout() {
-    localStorage.removeItem('token');
-    this.tokenSubject.next(null);
+    this.http.post(`${this.apiUrl}/logout`, {}, { withCredentials: true }).subscribe({
+      next: () => this.userSubject.next(null),
+      error: () => this.userSubject.next(null)
+    });
   }
 
-  getToken(): string | null {
-    return this.tokenSubject.value;
+  isLoggedIn(): boolean {
+    return !!this.userSubject.value;
   }
 
-  searchUsers(query: string) {
-    const token = this.getToken();
-    const headers = { Authorization: `Bearer ${token}` };
-    return this.http.get<any[]>(`${this.apiUrl}/search?q=${encodeURIComponent(query)}`, { headers });
-  }
-
-  getOnlineUsers() {
-    const token = this.getToken();
-    const headers = { Authorization: `Bearer ${token}` };
-    return this.http.get<string[]>(`${this.apiUrl}/online`, { headers });
+  getUser() {
+    return this.userSubject.value;
   }
 }

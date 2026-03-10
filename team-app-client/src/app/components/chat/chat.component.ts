@@ -1,6 +1,7 @@
 import { Component, OnInit, OnDestroy, ElementRef, ViewChild, ChangeDetectorRef } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
+import { firstValueFrom } from 'rxjs';
 import { ChatService } from '../../services/chat.service';
 import { AuthService } from '../../services/auth.service';
 import { WebrtcService } from '../../services/webrtc.service';
@@ -50,20 +51,18 @@ export class ChatComponent implements OnInit, OnDestroy {
     ) { }
 
     async ngOnInit() {
-        if (!this.authService.getToken()) {
-            this.router.navigate(['/login']);
-            return;
-        }
+        this.authService.user$.subscribe(user => {
+            if (!user) {
+                this.router.navigate(['/login']);
+                return;
+            }
 
-        // Decode token to get username (simple parse for now)
-        const token = this.authService.getToken();
-        if (token) {
-            try {
-                const payload = JSON.parse(atob(token.split('.')[1]));
-                this.currentUser = payload.DisplayName || payload.name || payload.unique_name;
-                this.currentUpn = payload.name || payload.unique_name;
-            } catch (e) { }
-        }
+            this.currentUser = user.displayName || user.email;
+            this.currentUpn = user.email;
+        });
+
+        // Ensure we have a valid session before connecting
+        await firstValueFrom(this.authService.refresh());
 
         this.loadUserProfiles();
 
@@ -75,7 +74,7 @@ export class ChatComponent implements OnInit, OnDestroy {
         }
 
         // Fetch initial online users
-        this.authService.getOnlineUsers().subscribe(users => {
+        this.chatService.getOnlineUsers().subscribe(users => {
             users.forEach(u => this.onlineUsers.add(u.toLowerCase()));
         });
 
@@ -188,7 +187,7 @@ export class ChatComponent implements OnInit, OnDestroy {
         }
 
         this.searchTimeout = setTimeout(() => {
-            this.authService.searchUsers(this.searchQuery).subscribe(users => {
+            this.chatService.searchUsers(this.searchQuery).subscribe(users => {
                 this.searchResults = users;
             });
         }, 500); // debounce 500ms

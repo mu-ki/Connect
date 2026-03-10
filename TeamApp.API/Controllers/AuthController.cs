@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.IdentityModel.Tokens;
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
+using System.Security.Cryptography;
 using System.Text;
 using TeamApp.API.Services;
 using TeamApp.API.Models;
@@ -60,9 +61,91 @@ public class AuthController : ControllerBase
             await _context.SaveChangesAsync();
         }
 
-        // 3. Generate JWT Token
+        // 3. Generate and persist tokens
+        var accessToken = GenerateAccessToken(user, out var accessExpiry);
+        var refreshToken = GenerateRefreshToken();
+        user.RefreshToken = refreshToken;
+        user.RefreshTokenExpiry = DateTime.UtcNow.AddDays(7);
+        _context.Users.Update(user);
+        await _context.SaveChangesAsync();
+
+        SetAuthCookies(accessToken, accessExpiry, refreshToken, user.RefreshTokenExpiry.Value);
+
+        // Return user info only; tokens are stored in secure cookies.
+        return Ok(user);
+    }
+
+    [HttpPost("refresh")]
+    public async Task<IActionResult> Refresh()
+    {
+        if (!Request.Cookies.TryGetValue("RefreshToken", out var refreshToken) || string.IsNullOrEmpty(refreshToken))
+        {
+            return Unauthorized();
+        }
+
+        var user = await _context.Users.FirstOrDefaultAsync(u => u.RefreshToken == refreshToken);
+        if (user == null || user.RefreshTokenExpiry == null || user.RefreshTokenExpiry < DateTime.UtcNow)
+        {
+            return Unauthorized();
+        }
+
+        // Rotate refresh token
+        var newRefreshToken = GenerateRefreshToken();
+        user.RefreshToken = newRefreshToken;
+        user.RefreshTokenExpiry = DateTime.UtcNow.AddDays(7);
+
+        var newAccessToken = GenerateAccessToken(user, out var accessExpiry);
+
+        _context.Users.Update(user);
+        await _context.SaveChangesAsync();
+
+        SetAuthCookies(newAccessToken, accessExpiry, newRefreshToken, user.RefreshTokenExpiry.Value);
+        return Ok(user);
+    }
+
+    [HttpPost("logout")]
+    public async Task<IActionResult> Logout()
+    {
+        if (Request.Cookies.TryGetValue("RefreshToken", out var refreshToken) && !string.IsNullOrEmpty(refreshToken))
+        {
+            var user = await _context.Users.FirstOrDefaultAsync(u => u.RefreshToken == refreshToken);
+            if (user != null)
+            {
+                user.RefreshToken = null;
+                user.RefreshTokenExpiry = null;
+                _context.Users.Update(user);
+                await _context.SaveChangesAsync();
+            }
+        }
+
+        ClearAuthCookies();
+        return Ok();
+    }
+
+    [HttpGet("profile")]
+    public async Task<IActionResult> Profile()
+    {
+        var userIdStr = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+        if (!Guid.TryParse(userIdStr, out var userId)) return Unauthorized();
+
+        var user = await _context.Users.FindAsync(userId);
+        if (user == null) return NotFound();
+
+        return Ok(new
+        {
+            user.Id,
+            user.DisplayName,
+            user.Email,
+            user.AvatarUrl
+        });
+    }
+
+    private string GenerateAccessToken(User user, out DateTime expires)
+    {
         var tokenHandler = new JwtSecurityTokenHandler();
         var key = Encoding.ASCII.GetBytes(_config["Jwt:Key"] ?? "super_secret_fallback_key_that_is_long_enough_for_hmac_sha256");
+        expires = DateTime.UtcNow.AddMinutes(15);
+
         var tokenDescriptor = new SecurityTokenDescriptor
         {
             Subject = new ClaimsIdentity(new[]
@@ -71,12 +154,49 @@ public class AuthController : ControllerBase
                 new Claim(ClaimTypes.Name, user.AdUpn),
                 new Claim("DisplayName", user.DisplayName)
             }),
-            Expires = DateTime.UtcNow.AddDays(7),
+            Expires = expires,
             SigningCredentials = new SigningCredentials(new SymmetricSecurityKey(key), SecurityAlgorithms.HmacSha256Signature)
         };
-        var token = tokenHandler.CreateToken(tokenDescriptor);
 
-        return Ok(new { Token = tokenHandler.WriteToken(token), User = user });
+        var token = tokenHandler.CreateToken(tokenDescriptor);
+        return tokenHandler.WriteToken(token);
+    }
+
+    private static string GenerateRefreshToken()
+    {
+        var randomBytes = new byte[64];
+        RandomNumberGenerator.Fill(randomBytes);
+        return Convert.ToBase64String(randomBytes);
+    }
+
+    private void SetAuthCookies(string accessToken, DateTime accessExpiry, string refreshToken, DateTime refreshExpiry)
+    {
+        var accessCookieOptions = new CookieOptions
+        {
+            HttpOnly = true,
+            Secure = Request.IsHttps,
+            SameSite = SameSiteMode.Lax,
+            Expires = accessExpiry,
+            Path = "/"
+        };
+
+        var refreshCookieOptions = new CookieOptions
+        {
+            HttpOnly = true,
+            Secure = Request.IsHttps,
+            SameSite = SameSiteMode.Lax,
+            Expires = refreshExpiry,
+            Path = "/"
+        };
+
+        Response.Cookies.Append("AccessToken", accessToken, accessCookieOptions);
+        Response.Cookies.Append("RefreshToken", refreshToken, refreshCookieOptions);
+    }
+
+    private void ClearAuthCookies()
+    {
+        Response.Cookies.Delete("AccessToken", new CookieOptions { Path = "/" });
+        Response.Cookies.Delete("RefreshToken", new CookieOptions { Path = "/" });
     }
 
     [HttpGet("search")]

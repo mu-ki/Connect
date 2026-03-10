@@ -11,6 +11,10 @@ public class User
     public DateTime? LastSeen { get; set; }
     public string? AvatarUrl { get; set; }
 
+    // Refresh token support for persistent login (cookie-based)
+    public string? RefreshToken { get; set; }
+    public DateTime? RefreshTokenExpiry { get; set; }
+
     public ICollection<Message> Messages { get; set; } = new List<Message>();
     public ICollection<WorkspaceUser> WorkspaceUsers { get; set; } = new List<WorkspaceUser>();
 }

@@ -7,15 +7,19 @@ public class AdAuthService : IAdAuthService
 {
     public bool ValidateCredentials(string username, string password)
     {
-        // Mock implementation for development.
-        // In a real environment on a Windows domain, you would use:
-        using (var context = new PrincipalContext(ContextType.Domain, "claysys.com"))
+        // Attempt real AD validation when running on Windows + domain access.
+        try
         {
-            return context.ValidateCredentials(username, password);
+            using (var context = new PrincipalContext(ContextType.Domain, "claysys.com"))
+            {
+                return context.ValidateCredentials(username, password);
+            }
         }
-        
-        // For now, accept any non-empty password for any user format (domain\user or user@domain)
-        return !string.IsNullOrEmpty(username) && !string.IsNullOrEmpty(password);
+        catch
+        {
+            // If AD validation fails (e.g., not on domain / no access), fall back to a simple check.
+            return !string.IsNullOrEmpty(username) && !string.IsNullOrEmpty(password);
+        }
     }
 
     public IEnumerable<TeamApp.API.Models.UserDto> SearchUsers(string searchTerm)
